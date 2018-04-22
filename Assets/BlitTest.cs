@@ -1,81 +1,56 @@
-﻿using UnityEngine;
-using UnityEngine.Rendering;
-using Unity.Collections.LowLevel.Unsafe;
-using Unity.Collections;
-using System;
+﻿using System;
 using System.Runtime.InteropServices;
+using UnityEngine;
 
 public class BlitTest : MonoBehaviour
 {
     [SerializeField] MeshRenderer _renderer;
 
-    [DllImport ("MetalTestPlugin")]
-    static extern System.IntPtr Plugin_GetBlitFunction();
+    [DllImport("MetalTestPlugin")]
+    static extern IntPtr Plugin_CreateIOSurfaceBackedTexture(int width, int height);
 
-    struct BlitParams
-    {
-        public IntPtr source;
-        public IntPtr destination;
-        public uint width;
-        public uint height;
-    };
+    [DllImport("MetalTestPlugin")]
+    static extern IntPtr Plugin_LookUpIOSurfaceBackedTexture(uint surfaceID);
 
-    NativeArray<BlitParams> _params;
-    CommandBuffer _command;
-    RenderTexture _target;
+    [DllImport("MetalTestPlugin")]
+    static extern void Plugin_DestroyIOSurfaceBackedTexture(IntPtr texture);
+
+    [DllImport("MetalTestPlugin")]
+    static extern uint Plugin_GetIOSurfaceBackedTextureID(IntPtr texture);
+
+    Texture2D _sourceTexture;
+    Texture2D _targetTexture;
 
     void Start()
     {
-        _params = new NativeArray<BlitParams>(1, Allocator.Persistent, NativeArrayOptions.UninitializedMemory);
-        _command = new CommandBuffer();
+        _sourceTexture = Texture2D.CreateExternalTexture(
+            512, 512, TextureFormat.RGBA32, false, false,
+            Plugin_CreateIOSurfaceBackedTexture(512, 512)
+        );
+
+        _targetTexture = Texture2D.CreateExternalTexture(
+            512, 512, TextureFormat.RGBA32, false, false,
+            Plugin_LookUpIOSurfaceBackedTexture(Plugin_GetIOSurfaceBackedTextureID(_sourceTexture.GetNativeTexturePtr()))
+        );
+
+        _renderer.material.mainTexture = _targetTexture;
     }
 
     void OnDestroy()
     {
-        if (_target != null) RenderTexture.ReleaseTemporary(_target);
+        Plugin_DestroyIOSurfaceBackedTexture(_sourceTexture.GetNativeTexturePtr());
+        Plugin_DestroyIOSurfaceBackedTexture(_targetTexture.GetNativeTexturePtr());
 
-        _params.Dispose();
-        _command.Dispose();
+        Destroy(_sourceTexture);
+        Destroy(_targetTexture);
     }
 
     unsafe void OnRenderImage(RenderTexture source, RenderTexture destination)
     {
-        if (_target != null)
-        {
-            if (_target.width != source.width || _target.height != source.height)
-            {
-                RenderTexture.ReleaseTemporary(_target);
-                _target = null;
-            }
-        }
-            
-        if (_target == null)
-        {
-            _target = RenderTexture.GetTemporary(source.width, source.height, 24);
-            _target.Create();
-            _renderer.material.mainTexture = _target;
-        }
-
-        // A heisenbug is here; We have to compare the following pointers
-        // to avoid getting an invalid render buffer.
-        var ptsrc = source.GetNativeTexturePtr();
-        var pbsrc = source.colorBuffer.GetNativeRenderBufferPtr();
-        if (ptsrc == pbsrc) return;
-
-        _params[0] = new BlitParams {
-            source = pbsrc,
-            destination = _target.colorBuffer.GetNativeRenderBufferPtr(),
-            width = (uint)source.width,
-            height = (uint)source.height
-        };
-
-        _command.Clear();
-        _command.IssuePluginEventAndData(
-            Plugin_GetBlitFunction(), 0,
-            (System.IntPtr)_params.GetUnsafeReadOnlyPtr()
-        );
-
-        Graphics.ExecuteCommandBuffer(_command);
+        var temp = RenderTexture.GetTemporary(512, 512, 0, RenderTextureFormat.Default, RenderTextureReadWrite.Linear);
+        Graphics.Blit(source, temp);
+        Graphics.CopyTexture(temp, _sourceTexture);
+        RenderTexture.ReleaseTemporary(temp);
         Graphics.Blit(source, destination);
     }
 }
