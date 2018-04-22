@@ -26,7 +26,7 @@ public class BlitTest : MonoBehaviour
 
     void Start()
     {
-        _params = new NativeArray<BlitParams>(new BlitParams[2], Allocator.Persistent);
+        _params = new NativeArray<BlitParams>(1, Allocator.Persistent, NativeArrayOptions.UninitializedMemory);
         _command = new CommandBuffer();
     }
 
@@ -62,9 +62,7 @@ public class BlitTest : MonoBehaviour
         var pbsrc = source.colorBuffer.GetNativeRenderBufferPtr();
         if (ptsrc == pbsrc) return;
 
-        var p = new NativeSlice<BlitParams>(_params, Time.frameCount & 1);
-
-        p[0] = new BlitParams {
+        _params[0] = new BlitParams {
             source = pbsrc,
             destination = _target.colorBuffer.GetNativeRenderBufferPtr(),
             width = (uint)source.width,
@@ -74,7 +72,7 @@ public class BlitTest : MonoBehaviour
         _command.Clear();
         _command.IssuePluginEventAndData(
             Plugin_GetBlitFunction(), 0,
-            (System.IntPtr)p.GetUnsafeReadOnlyPtr()
+            (System.IntPtr)_params.GetUnsafeReadOnlyPtr()
         );
 
         Graphics.ExecuteCommandBuffer(_command);
